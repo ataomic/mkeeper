@@ -10,17 +10,27 @@ typedef struct mkp_table_s {
 	mkp_pool pool;
 	mkp_hash hash;
 	int err;
-	u32 ctor_count, dtor_count,
-		err_count;
+	u32 counters[MKP_C_MAX];
 	mkp_alloc alloc;
 	mkp_free free;
 } mkp_table;
 
-#define mkp_table_init(table) \
-	memset(table, 0, sizeof(*(table)))
+#define mkp_table_zero_misc(table) do { \
+	(table)->err = 0; \
+	memset((table)->counters, 0, sizeof((table)->counters)); \
+} while(0)
 
-#define mkp_bucket(table, p) \
-	((table)->buckets+(((unsigned long)p)&UINT_MAX))
+#define mkp_table_zero(table) do { \
+	mkp_pool_zero(&(table)->pool); \
+	mkp_hash_zero(&(table)->hash); \
+	mkp_table_zero_misc(table); \
+} while(0)
+
+#define mkp_table_init(table) do { \
+	mkp_table_zero(table); \
+	(table)->alloc = malloc; \
+	(table)->free = free; \
+} while(0)
 
 #define MKP_OBJ_MEM_SIZE(n) (sizeof(mkp_obj)*(n))
 #define MKP_BKT_MEM_SIZE(n) (sizeof(mkp_list)*(n))
@@ -35,29 +45,21 @@ typedef struct mkp_table_s {
 	memset(_mkp_p, 0, MKP_MEM_SIZE(osz, bsz)); \
 	mkp_pool_init(&(table)->pool, (mkp_obj*)_mkp_p, osz); \
 	_mkp += MKP_OBJ_MEM_SIZE(osz); \
-	mkp_hash_init(&(table)->hash, (mkp_list*)_mkp_p, bsz); \
+	mkp_hash_init(&(table)->hash, &(table)->pool, (mkp_list*)_mkp_p, bsz); \
 }while(0)
 
 #define mkp_table_fini_mem(table) do { \
+	if((table)->pool.addr) \
+		(table)->free((table)->pool.addr); \
+	mkp_table_zero(table); \
 } while(0)
 
-typedef int (*mkp_obj_op)(mkp_table*, mkp_obj*);
-
-static __inline void mkp_table_check(mkp_table *table, u32 index,
-	mkp_obj *obj)
-{
-	return;
-}
-
 #define mkp_table_alloc_obj(table) mkp_pool_alloc_obj(&(table)->pool)
+#define mkp_table_free_obj(table, obj) \
+	mkp_pool_free_obj(&(table)->pool, obj)
 
-static __inline void mkp_table_free_obj(mkp_table *table,
-										 mkp_obj *obj)
-{
-	u32 index = mkp_obj_index(table, obj);
-	mkp_obj_init(obj);
-	mkp_list_insert(&table->pool.free, index, obj);
-}
+#define mkp_inc(table, c) ((table)->counters[c] ++)
+#define mkp_dec(table, c) ((table)->counters[c] --)
 
 static __inline void mkp_table_lazyfree_obj(mkp_table *table,
 											 mkp_obj *obj)
@@ -71,20 +73,17 @@ static __inline void mkp_table_lazyfree_obj(mkp_table *table,
 	pool->free.next = index;
 }
 
-static __inline void mkp_table_rec(mkp_table *table,
-								   mkp_obj *obj, u8 error)
+static __inline void mkp_table_rec(mkp_table* table, mkp_obj* obj,
+	u8 error)
 {
-	u32 index = mkp_obj_index(table, obj);
-
+	u32 index = mkp_table_obj_index(table, obj);
 	mkp_obj_rec(obj, MKP_OP_ERR, error);
 	mkp_list_insert(&table->err, index, obj);
-	table->err_count ++;
+	mkp_inc(table, MKP_C_ERR);
 }
 
-static __inline mkp_obj *mkp_table_add(
-	mkp_table *table,
-	void *p, size_t sz,
-	u8 flags)
+static __inline mkp_obj* mkp_table_add(mkp_table* table, const void* p,
+	size_t sz, u8 flags)
 {
 	u8 err = MKP_SUCCESS;
 	u32 index;
@@ -93,26 +92,22 @@ static __inline mkp_obj *mkp_table_add(
 
 	table->ctor_count ++;
 
-	if (!table->buckets) {
-		return NULL;
-	}
-
 	bucket = mkp_bucket(table, p);
 	old = mkp_table_find_obj(table, bucket, p, &pre);
 
-	if (old) {
-		if (!old->flags) {
+	if(old) {
+		if(!old->flags) {
 			err = MKP_ERR_CTOR;
-		} else if (mkp_is_lzy(old)) {
+		} else if(mkp_is_lzy(old)) {
 			mkp_list_erase(bucket, pre, old);
 			old = NULL;
 		}
 	}
 
-	if (!old || err) {
+	if(!old || err) {
 		obj = mkp_table_alloc_obj(table);
 
-		if (!obj) {
+		if(!obj) {
 			return NULL;
 		}
 
@@ -121,13 +116,13 @@ static __inline mkp_obj *mkp_table_add(
 		obj->flags = flags;
 	}
 
-	if (err) {
-		if (old) {
+	if(err) {
+		if(old) {
 			obj->opt.next = mkp_obj_index(table, old);
 		}
 
 		mkp_table_rec(table, obj, err);
-	} else if (old) { /* maybe monitor */
+	} else if(old) { /* maybe monitor */
 		obj = old;
 		obj->size = sz;
 		obj->flags = flags;
@@ -142,9 +137,8 @@ static __inline mkp_obj *mkp_table_add(
 	return obj;
 }
 
-static __inline mkp_obj *mkp_table_del(
-	mkp_table *table,
-	void *p, size_t sz)
+static __inline mkp_obj* mkp_table_del(mkp_table *table, const void *p,
+	size_t sz)
 {
 	u8 err = MKP_SUCCESS;
 	mkp_obj *old, *obj = NULL, *pre;
@@ -152,37 +146,37 @@ static __inline mkp_obj *mkp_table_del(
 
 	table->dtor_count ++;
 
-	if (!table->buckets) {
+	if(!table->buckets) {
 		return NULL;
 	}
 
 	bucket = mkp_bucket(table, p);
 	old = mkp_table_find_obj(table, bucket, p, &pre);
 
-	if (!old) {
+	if(!old) {
 		err = MKP_ERR_MISS;
-	} else if (mkp_is_lzy(old)) {
+	} else if(mkp_is_lzy(old)) {
 		err = MKP_ERR_DTOR;
-	} else if (sz && old->size != sz) {
+	} else if(sz && old->size != sz) {
 		err = MKP_ERR_SIZE;
 	}
 
-	if (err) {
+	if(err) {
 		obj = mkp_table_alloc_obj(table);
 
-		if (!obj) {
+		if(!obj) {
 			return NULL;
 		}
 
 		obj->addr = p;
 		obj->size = sz;
 
-		if (old) {
+		if(old) {
 			obj->opt.next = mkp_obj_index(table, old);
 		}
 
 		mkp_table_rec(table, obj, err);
-	} else if (!old->flags) {
+	} else if(!old->flags) {
 		mkp_table_lazyfree_obj(table, old);
 		table->count --;
 	}
@@ -190,61 +184,21 @@ static __inline mkp_obj *mkp_table_del(
 	return obj;
 }
 
-static __inline int mkp_table_visit_error(mkp_table *table,
-										  mkp_obj_proc visit)
+static __inline int mkp_table_visit_error(mkp_table* table,
+	mkp_obj_proc visit)
 {
-	u32 i = table->err.next;
-	int ret = 0;
-	mkp_obj *obj;
-
-	while (i) {
-		obj = mkp_obj_addr(table, i);
-
-		if (!obj) {
-			break;
-		}
-
-		i = obj->next;
-		ret = visit(table, obj);
-
-		if (ret != 0) {
-			break;
-		}
-	}
-
-	return ret;
 }
 
-static __inline int mkp_table_visit(mkp_table *table,
-									mkp_obj_proc visit)
+lazy_free
 {
-	u32 count = 0;
-	int i, ret;
-	mkp_obj *obj;
-
-	for (i = 0; i < table->size; i ++) {
-		obj = table->pool.addr + i;
-
-		if (!obj->addr) {
-			continue;
+if(mkp_is_lzy(obj)) {
+			mkp_table_erase_obj(table, obj);
+			i = obj->opt.next;
+			mkp_obj_init(obj);
 		}
+		else
 
-		ret = visit(table, obj);
-
-		if (ret != 0) {
-			return ret;
-		}
-
-		count ++;
-
-		if (count == table->count) {
-			break;
-		}
-	}
-
-	return 0;
 }
-
 
 #endif
 

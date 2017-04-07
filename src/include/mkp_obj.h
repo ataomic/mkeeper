@@ -6,31 +6,43 @@
 
 #include "mkp_list.h"
 
+#define MKP_OBJ \
+	u32 next:MKP_BITS; \
+	u32 type:2; \
+	u32 flags:30-MKP_BITS
+
+typedef struct mkp_bktrace_s {
+	MKP_OBJ;
+	u32 depth:8;
+	u32 bk_type:4;
+	u32 unused:20;
+	void* buf[MKP_STACK_DEPTH];
+} mkp_bktrace;
+
 typedef struct mkp_obj_s {
-	u32 ret:4;
-	u32 flags:27-MKP_BITS;
-	u32 next: MKP_BITS;
+	MKP_OBJ;
+	u32 bktrace:MKP_BITS;
+	u32 err:32-MKP_BITS;
 	u32 size;
-	struct mkp_list opt;
-	u16 depth[MKP_OP_T_MAX];
-	void *op[MKP_OP_T_MAX][MKP_STACK_DEPTH];
 	void *addr;
 } mkp_obj;
 
 #define mkp_obj_init(obj) \
 	memset(obj, 0, sizeof(*(obj)))
 
+typedef int (*mkp_obj_op)(mkp_obj*, void*);
+
 #define mkp_obj_backtrace(obj, type) \
 	((obj)->depth[type] = backtrace((obj)->op[type], MKP_STACK_DEPTH))
 
 static __inline void mkp_obj_set_err(mkp_obj* obj, u8 err)
 {
-	obj->ret = err;
+	obj->err = err;
 }
 
-#define mkp_obj_rec(obj, type, err) do { \
+#define mkp_obj_rec(obj, err, bk) do { \
 	mkp_obj_set_err(obj, err); \
-	mkp_obj_backtrace(obj, type); \
+	mkp_obj_set_backtrace(obj, bk); \
 }while(0)
 
 #endif
