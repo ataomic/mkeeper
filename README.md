@@ -15,22 +15,33 @@ SUAF won't cause issue in application and memory allocator. It's very hard to de
 If the application writes more data than allocated, we call it Simple Memory Corruption (SMC)
 SMC causes issues in application and memory allocator, but it's not hard to detect by adding magic pad data. Memory Keeper can add the pad data if memory allocator doesn't support it.
 
-### Complicate Double Free
-If the application frees same memory twice and the memory has been re-allocated after first free, we call it Complicate Double Free (CDF).
+### Complex Double Free
+If the application frees same memory twice and the memory has been re-allocated after first free, we call it Complex Double Free (CDF).
 CDF causes Memory Corruption, and it's very hard to debug without tool such as memory keeper. Memory Keeper requires different alloc-free interface in application for the protection. But it still supports debugging without application modification.
 
-### Complicate Use After Free
-If the application uses same memory after freed and it has been re-allocated, we call it Complicate Use After Free (CUAF).
+### Complex Use After Free
+If the application uses same memory after freed and it has been re-allocated, we call it Complex Use After Free (CUAF).
 CUAF causes Memory Corruption heavily. It's hard to protect but it's easy to debug in Memory Keeper.
 
-### Complicate Memory Corruption
-Most of time, CDF and CUAF are the reasons of Complicate Memory Corruption. A vary case, someone's code writes the data in some addresses randomly. It's a real story that one guy merged his test code. 
+### Complex Memory Corruption
+Most of time, CDF and CUAF are the reasons of Complex Memory Corruption. A rare case, someone's code writes the data in some addresses randomly. It's a real story that one guy merged his test code. If the corrupted part is regular data, it causes program functional issue, but if the corrupted part is a pointer, it causes Segment Fault. 
 
 ### Memory Leak
-Memory leak is very common in large software project. Even the software is not written by C/C++, it still can leak resources such as File Descriptor. Memory Keeper provides the method to safely cleanup the memory, and again, it supports debugging without application modification. For File Descriptor leaking, Memory Keeper provides APIs can be very easily integreated. 
+Memory leak is very common in large software project, even though the software developed by the language with GC, it still can leak resources such as File Descriptor, Circular and Complex Bi-Directional References. Memory Keeper provides the method to safely cleanup the memory, and again, it supports debugging without application modification. For File Descriptor leaking, Memory Keeper provides APIs can be very easily integreated. 
 
 ### Simple Segment Fault
 We also can call it Null Pointer Segment Fault. It happens if developer forget put sanity check before use.
 
-## backtrace
+### Complex Segment Fault
+Most of time, Complex Segment Fault caused by Complex Memory Corruption. A rare case, CPU may erase part of register in bad environement. 
+
+## Protection
+Memory Keeper support 
+
+## Runtime Debugging
+
+## Remote Debugging
+
+## Dump
+
 
