@@ -44,4 +44,9 @@ Memory Keeper support
 
 ## Dump
 
+## Memory Domain
+There are two kinds of generic memory usage. 1. Structures 2. Pure Data. Consider use different memory domain for different type, it will cause less trouble. For example, SMC usually happens in Pure Data, so if all pure data are allocated from same doamin, the structure won't be corrupted, the system may get the function error, but it won't crash. 
+
+## C on VM
+If C can be compiled as bytecode of a VM, then there are more things can be done in memory part. For example, use garbage collection to check memory leak.
 
